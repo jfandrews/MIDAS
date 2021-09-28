@@ -1,0 +1,712 @@
+//Copyright Joel F. Andrews (c) 2019
+
+//Modular Irradiation Platform for Nikon A1 Confocal
+
+global int a, number, expType, stimType, roiType, div, width, height, waveType, controlType;
+global dword stimTime[50];
+global double power1, power2, power3, power4,time1,time2,time3,time4, scanSpeed, UsedPower[50], UsedTime[50], interval;
+global char file[200], path[200], iter[200];
+
+int main() 
+{
+	getSettings();
+	if (expType == 0) 
+	staticStim();
+	if (expType == 1)
+	timelapseStim();
+	if (expType ==2)
+	timelapseStim();
+	if (expType!=2)
+		{output();}			//Serial calls output() for each run
+	deleteVariables();
+}
+
+int getSettings() //sets experimental settings, expects global expType, stimType, power1, power2,  power3, power4, scanSpeed
+{
+	double fpsList[10];
+  
+	 
+	Int_CreateComboBox("Experimental Settings","Wavelength","Timelapse","Power Levels" ,NULL,NULL);
+	  
+	Int_AddItemComboBox(1, "355");
+ 	Int_AddItemComboBox(1, "405");
+	Int_AddItemComboBox(2, "Static");
+	Int_AddItemComboBox(2, "Parallel Timelapse");
+	Int_AddItemComboBox(2, "Serial Timelapse");
+	Int_AddItemComboBox(3, "Single");
+	Int_AddItemComboBox(3, "Multiple");
+	Int_ShowComboBox();
+	waveType= Int_Cmb1; 
+	expType = Int_Cmb2;
+	stimType = Int_Cmb3;
+	
+	if(stimType==0)
+	{
+		controlType=Int_Question("Get Settings","Include Random Controls?","Yes","No",NULL,NULL,1,0);
+	}
+	
+	if(waveType==0)
+	{
+		Int_CreateComboBox("Stimulation Settings","ROI Shape",NULL,NULL,NULL,NULL);
+		Int_AddItemComboBox(1, "2x2");
+		Int_AddItemComboBox(1, "3x3");
+		Int_AddItemComboBox(1, "16x4");
+		Int_AddItemComboBox(1, "Custom");
+		Int_ShowComboBox();
+		roiType = Int_Cmb1;
+	}
+	if(waveType==1)
+	{ 
+		Int_CreateComboBox("Stimulation Settings","Scan Speed (fps)","ROI Shape",NULL,NULL,NULL);
+		fpsList[0] = 0.0625;
+		fpsList[1] = 0.125;
+		fpsList[2] = 0.25;
+		fpsList[3] = 0.5;
+		fpsList[4] = 1.0;
+		fpsList[5] = 2.0;
+		fpsList[6] = 4.0; 
+		Int_AddItemComboBox(1, "16");
+		Int_AddItemComboBox(1, "8");
+		Int_AddItemComboBox(1, "4");
+		Int_AddItemComboBox(1, "2");
+		Int_AddItemComboBox(1, "1");
+		Int_AddItemComboBox(1, "1/2");
+		Int_AddItemComboBox(1, "1/4");
+		Int_AddItemComboBox(2, "2x2");
+		Int_AddItemComboBox(2, "3x3");
+		Int_AddItemComboBox(2, "8x4");
+		Int_AddItemComboBox(2, "Custom");
+		Int_ShowComboBox();
+		scanSpeed = fpsList[Int_Cmb1];
+		roiType = Int_Cmb2;
+	}
+	if ((stimType==1) && (waveType==0))
+		goto multiple_355;
+	if ((stimType==1) && (waveType==1))
+		goto multiple_405; 
+	if ((stimType==0) && (waveType==0)) 
+		goto single_355;
+	if ((stimType==0) && (waveType==1))
+		goto single_405;
+	multiple_355:
+		time1= Int_GetValue("Time Setting","Please enter time setting 1",0.00000,1,20);                 //User selects four stimulation times
+		time2= Int_GetValue("Time Setting","Please enter time setting 2",0.00000,1,20);
+		time3= Int_GetValue("Time Setting","Please enter time setting 3",0.00000,1,20);
+		time4= Int_GetValue("Time Setting","Please enter time setting 4",0.00000,1,20);
+		goto post;
+	multiple_405:
+		power1= Int_GetValue("Power Setting","Please enter power setting 1",0.00000,1,20);                 //User selects four stimulation power levels
+		power2= Int_GetValue("Power Setting","Please enter power setting 2",0.00000,1,20);
+		power3= Int_GetValue("Power Setting","Please enter power setting 3",0.00000,1,20);
+		power4= Int_GetValue("Power Setting","Please enter power setting 4",0.00000,1,20);
+	goto post;
+	single_355:
+		time1= Int_GetValue("Time Setting","Please enter time setting 1",0.00000,1,20);					 //User selects single stimulation time
+		goto post;   
+  single_405:
+		power1= Int_GetValue("Power Setting","Please enter power setting 1",0.00000,1,20);            //User selects single stimulation power level
+		goto post;
+
+	post:
+		CameraSet_StimulationTime1(scanSpeed);
+		CameraSet_Stim405Enable1(1);
+
+}
+
+
+int timelapseStim()	//stimulation with pre-stim image and post-stim timelapse
+{
+	dword dw;
+	word day, month, year;
+	char date[200];
+	char final[200], test[200], ret[20], output[200], pre[200], post[200],ref1[200], ref2[200], ref3[200], ref4[200];
+	double duration;
+	dword start;
+	int top[1], left[1], bottom[1], right[1];
+	int position, count, i;
+
+
+	dw = Get_Date();
+	year = HIWORD(dw);
+	month = HIBYTE(LOWORD(dw));
+	day = LOBYTE(LOWORD(dw));
+	date = "";
+	strcat(date,month);
+	strcat(date,"_");
+	strcat(date,day);
+	strcat(date,"_");
+	strcat(date,year);
+	strcat(date,"\\");
+	path = "C:\\Users\Nikon A1 Confocal\\User Images\\Stimulation Videos\\";
+	strcat(path,date);                                                    //Create folder path with current date
+	Int_GetString("File Name","Please enter file name",file,200);        //Get filename for current acquistion
+
+	interval = Int_GetValue("Time Interval","Interval for timelapse in seconds",0.00000,1,20);
+	duration = Int_GetValue("Time Duration","Duration of timelapse in minutes",0.00000,1,20);
+	duration = ((duration*60)/interval)+1;
+	interval = interval*1000;
+	
+	
+	
+	if (expType==1)
+		goto parallel;
+	if (expType==2)
+		goto serial;
+	
+  serial:
+   	
+		Live();
+		Int_CreateTextWindow("Select XY Points",8,0,16777215,70);
+		PauseMacro("Select XY Points");
+		count = ND_MP_GetCount();
+		//WaitText(0,count);
+		Freeze_LiveOrND();
+		ClearMeasROI();
+		
+		for (i=0;i<count;i=i+1;)
+		{
+		   ref1 = file;
+      strcat(ref1,"_");
+      strcat(ref1,i);
+      iter=ref1;
+      ref3=ref1;
+      ref2 = path;
+      strcat (ref1, "_Pre");
+      strcat(ref2, ref1);
+      number = 1;
+     ND_MP_MoveToIndex(i,0);
+			ND_ResetTimeExp();
+			ND_DefineExperiment(TRUE,FALSE,FALSE,FALSE,0,ref2,"",0,0,0,0);        //Define ND2 timelapse for pre-stimulation frame, name is filename + _PRE
+			ND_DefineExperiment(TRUE,FALSE,FALSE,FALSE,0,ref2,"",0,0,1,0);
+			ND_AppendTimePhaseEx(interval,1,"","Phase1");    
+			ND_RunTimeExp();
+			ClearMeasROI();
+			CreateRectangleROI(237,64,3,3,0,16777215);
+     CopyROI();
+			ChangeROIType(1,3);
+			if(waveType==0)
+			simpleStim355();
+			if(waveType==1)
+			simpleStim405();
+			
+			ref4 = path;
+			strcat(ref3,"_Post");
+			strcat(ref4, ref3);
+			ND_ResetTimeExp();
+			ND_DefineExperiment(TRUE,FALSE,FALSE,FALSE,0,ref4,"",0,0,0,0);                    //Create ND2 timelapse with filename + _POST
+			ND_DefineExperiment(TRUE,FALSE,FALSE,FALSE,0,ref4,"",0,0,1,0);       
+			ND_AppendTimePhaseEx(interval,duration,"","Phase1");
+			ND_RunTimeExp(); //Acquire timelapse
+      
+     
+			ShowMeasROI(1);
+			SelectAllROIs(1);
+			//CopyROI();
+			//_NDImagesArithmetics();                                                     //User must concatenate PRE and POST files, will be saved with filename
+			PasteROI();
+     
+			output();
+     CloseAllDocuments(1);
+   }
+   Int_CloseTextWindow();
+		goto end;
+		
+		
+	parallel:
+   ref1 = file;
+   ref2 = path;
+   strcat (ref1, "_Pre");
+   strcat(ref2, ref1);
+   ND_ResetTimeExp();
+		ND_DefineExperiment(TRUE,FALSE,FALSE,FALSE,0,ref2,"",0,0,0,0);        //Define ND2 timelapse for pre-stimulation frame, name is filename + _PRE
+		ND_DefineExperiment(TRUE,FALSE,FALSE,FALSE,0,ref2,"",0,0,1,0);        //Define ND2 timelapse for pre-stimulation frame, name is filename + _PRE
+		ND_AppendTimePhaseEx(interval,1,"","Phase1");
+		Live();
+		Int_CreateTextWindow("Adjust PFS Focus if Necessary",8,0,16777215,70);
+		PauseMacro("Adjust PFS Focus");
+		ND_RunTimeExp();                                                                //Acquire first frame
+		ClearMeasROI();
+		Zoom(400);
+		
+		if (roiType==3)
+			customROI();
+		createROIs();
+		if(waveType==0)
+			stim355();
+		if(waveType==1)
+			stim405();
+		ref3 = file;
+		ref4 = path;
+		strcat(ref3,"_Post");
+		strcat(ref4, ref3);
+		ND_ResetTimeExp();
+		ND_DefineExperiment(TRUE,FALSE,FALSE,FALSE,0,ref4,"",0,0,0,0);                    //Create ND2 timelapse with filename + _POST
+		ND_DefineExperiment(TRUE,FALSE,FALSE,FALSE,0,ref4,"",0,0,1,0);                    //Make PSF work?
+		ND_AppendTimePhaseEx(interval,duration,"","Phase1");
+		ND_RunTimeExp();                                                                //Acquire timelapse
+		
+	 end:
+   //WaitText(0,"this is the end");
+}
+
+int staticStim()	//stimulation with pre-stim image 
+{
+  char name[200],h[200];
+   
+	Capture();
+	ClearMeasROI();
+	Zoom(400);
+	if(roiType==3)
+	customROI();
+	createROIs();
+	if(waveType==0)
+		stim355();
+	if(waveType==1)
+		stim405();
+  Capture();
+	_ImageSaveAs();
+  Get_Filename(5,h);
+	Get_FileTitle(name,h); 
+  memcpy(path,h,2*strlen(h)-2*strlen(name));
+  
+}
+
+int customROI()  //creates custom ROI, expects global width, height
+{
+	Int_CreateTextWindow("Draw Stim ROI",8,0,16777215,70);
+	_SimpleROIEditor();
+	GetROIInfo(1,left,top,right,bottom,NULL,NULL,NULL,NULL,NULL,NULL);
+	width = abs(right[0]-left[0]);
+	height = abs(top[0]-bottom[0]);
+	ClearMeasROI();
+	Int_CloseTextWindow(); 
+}
+
+int createROIs() //creates ROIs, expects global roiType, div
+{
+	int input, mousex[1], mousey[1];
+	Int_CreateTextWindow("Click Left Mouse Button to Add Stimulation Point, Click Right Mouse Button When Done",8,0,16777215,70);
+
+	check:                                                                            //Following code creates ROIs with left mouse click, right mouse click to exit
+		input = Int_WaitForEvent();
+		if (input == VK_LBUTTON)
+			goto point;
+		if (input == VK_RBUTTON)
+			goto done;
+
+	point:
+	  Int_GetMousePos(mousex, mousey);
+		 if(roiType ==0)
+		 CreateRectangleROI(mousex[0],mousey[0],2,2,0.00000,16777215);
+		 if(roiType==1)
+		 CreateRectangleROI(mousex[0],mousey[0],3,3,0.00000,16777215);
+		 if(roiType==2)
+		 CreateRectangleROI(mousex[0],mousey[0],8,4,0.00000,16777215);
+		 if(roiType==3)
+		 CreateRectangleROI(mousex[0],mousey[0],width,height,0.00000,16777215);
+		 goto check;
+	   goto check;
+	done:
+	  number=GetROICount();
+	  div = number/4;
+	Int_CreateTextWindow("Adjust ROIs if required",8,0,16777215,70);
+	PauseMacro("");
+	Int_CloseTextWindow();
+	SelectAllROIs(0);
+	return TRUE;
+}
+
+
+int simpleStim355()	//minimal 355 nm stimulation
+{
+	ManualShot("CLxStimulationDeviceGalvoXY", 1,time1,1); 
+  UsedTime[1] = time1;
+	Wait(time1/1000);	
+}
+
+int simpleStim405()	//minimal 405 nm stimulation
+{
+	double wait;
+	
+	StimulationDeviceSetActive("CLxStimulationDeviceA1New");
+	CameraSet_StimulationEnable1LaserMask(1);
+	CameraSet_Stim405LaserPower1(power1);
+	CameraSet_CH1LaserStimulationPower1(power1);
+	UsedPower[1] = power1;
+  Stimulate(scanSpeed*1000,1,0);
+	if(scanSpeed>0.25)
+		{wait=scanSpeed*1.25}
+	else wait=0.35;
+	Wait(wait);
+}
+	
+int stim405()	//405 nm stimulation via A1, with control and multi-power option
+{
+	int i,ranbin, tick;
+	double wait;
+	
+	StimulationDeviceSetActive("CLxStimulationDeviceA1New");
+	CameraSet_StimulationEnable1LaserMask(1);
+	if(scanSpeed>0.25)
+		{wait=scanSpeed*1.25}
+	else wait=0.35;
+	tick = 0;
+	if (stimType==1)
+		goto multi_405;
+	if(stimType!=1)
+		goto sin_405;
+
+	multi_405:
+	for (i=1; i<=number; i=i+1;)
+	{
+		if (i<=div)
+		{
+		CameraSet_Stim405LaserPower1(power1);
+		CameraSet_CH1LaserStimulationPower1(power1);
+		UsedPower[i] = power1;
+		}
+		if ((i<=2*div) && (i>div))
+		{
+		CameraSet_Stim405LaserPower1(power2);
+		CameraSet_CH1LaserStimulationPower1(power2);
+		UsedPower[i] = power2;
+		}
+		if ((i>2*div) && (i<=3*div))
+		{
+		CameraSet_Stim405LaserPower1(power3);
+		CameraSet_CH1LaserStimulationPower1(power3);
+		UsedPower[i] = power3;
+		}
+		if ((i>3*div) && (i<=4*div))
+		{
+		CameraSet_Stim405LaserPower1(power4);
+		CameraSet_CH1LaserStimulationPower1(power4);
+		UsedPower[i] = power4;
+		}
+		ChangeROIType(i,3);
+
+		Stimulate(scanSpeed*1000,1,0);
+		Wait(wait);
+		stimTime[i-1] = Get_Time();
+		ChangeROIType(i,0);
+	}
+	goto post1_405;
+
+	sin_405:
+
+	for (i=1; i<=number; i=i+1)
+	{
+		ChangeROIType(i,3);
+		if(controlType ==2)
+		{
+			CameraSet_Stim405LaserPower1(power1);
+			CameraSet_CH1LaserStimulationPower1(power1);
+			UsedPower[i] = power1;
+			goto stim_405;
+		}	
+
+		ranbin=Ran_Bin();
+
+		if((ranbin==0) && (tick<2))
+		{
+			CameraSet_Stim405LaserPower1(0.0);
+			CameraSet_CH1LaserStimulationPower1(0.0);
+			UsedPower[i] = 0.0;
+			tick = tick+1;
+			goto stim_405;
+		}
+		if((ranbin==0) && (tick>=2))
+		{
+			CameraSet_Stim405LaserPower1(power1);
+			CameraSet_CH1LaserStimulationPower1(power1);
+			UsedPower[i] = power1;
+			goto stim_405;
+		}
+		if((ranbin==1) && (tick>=2))
+		{
+			CameraSet_Stim405LaserPower1(power1);
+			CameraSet_CH1LaserStimulationPower1(power1);
+			UsedPower[i] = power1;
+			goto stim_405;
+		}
+		if((ranbin==1) && (tick<2) && (i >= (number-2) ))
+		{
+			CameraSet_Stim405LaserPower1(0.0);
+			CameraSet_CH1LaserStimulationPower1(0.0);
+
+			UsedPower[i] = 0.0;
+			tick = tick+1;
+			goto stim_405;
+		}
+		if((ranbin==1) && (tick<2) && (i < number-2 ))
+		{
+			CameraSet_Stim405LaserPower1(power1);
+			CameraSet_CH1LaserStimulationPower1(power1);
+			UsedPower[i] = power1;
+			goto stim_405;
+		}
+
+		stim_405:
+		Stimulate(scanSpeed*1000,1,0);
+		Wait(wait);
+		stimTime[i-1] = Get_Time();
+		ChangeROIType(i,0);
+
+	}
+	post1_405:
+	return TRUE
+}
+
+int Ran_Bin()	//generates random TRUE or FALSE output
+{
+	int num;
+	num=random(-1);
+	if(num>16383)
+		return TRUE;
+	else return FALSE;
+}                                   
+
+
+int stim355() 	//355 nm stimulation via XYgalvonometer, with control and multi-time options
+{
+	int i,ranbin, tick;
+	StimulationDeviceSetActive("CLxStimulationDeviceGalvoXY");
+
+	if (stimType==1)
+		goto multi;
+	if(stimType!=1)
+		goto sin;
+
+	multi:
+		for (i=1; i<=number; i=i+1;)
+		{
+			ChangeROIType(i,3);
+			if (i<=div)
+			{
+				ManualShot("CLxStimulationDeviceGalvoXY", 1,time1,1); 
+				Wait(time1/1000);
+				UsedTime[i] = time1;
+			}
+			if ((i<=2*div) && (i>div))
+			{
+				ManualShot("CLxStimulationDeviceGalvoXY", 1,time2,1); 
+				Wait(time2/1000);
+				UsedTime[i] = time2;
+			}
+			if ((i>2*div) && (i<=3*div))
+			{
+				ManualShot("CLxStimulationDeviceGalvoXY", 1,time3,1); 
+				Wait(time3/1000);
+				UsedTime[i] = time3;
+			}
+			if ((i>3*div))
+			{
+				ManualShot("CLxStimulationDeviceGalvoXY", 1,time4,1); 
+				Wait(time4/1000);
+				UsedTime[i] = time4;
+			}
+			stimTime[i-1] = Get_Time();
+			ChangeROIType(i,0);
+		}
+		goto post1;
+
+	sin:
+		tick = 0;
+
+		for (i=1; i<=number; i=i+1)
+		{
+			ChangeROIType(i,3);
+			if(controlType ==2)
+			{
+				ManualShot("CLxStimulationDeviceGalvoXY", 1,time1,1); 
+				Wait(time1/1000);
+				UsedTime[i] = time1;
+				goto done355;
+			}	
+			ranbin=Ran_Bin();
+			if((ranbin==0) && (tick<2))
+			{
+				Wait(time1/1000);
+				UsedTime[i] = 0.0;
+				tick = tick+1;
+				goto done355;
+			}
+			if((ranbin==0) && (tick>=2))
+			{
+				ManualShot("CLxStimulationDeviceGalvoXY", 1,time1,1); 
+				Wait(time1/1000);
+				UsedTime[i] = time1;
+				goto done355;
+			}
+			if((ranbin==1) && (tick>=2))
+			{
+				ManualShot("CLxStimulationDeviceGalvoXY", 1,time1,1); 
+				Wait(time1/1000);
+				UsedTime[i] = time1;
+				goto done355;
+			}
+			if((ranbin==1) && (tick<2) && (i > (number-2) ))
+			{
+				//ManualShot("CLxStimulationDeviceGalvoXY", 1,0,1);
+				Wait(time1/1000);
+				UsedTime[i] = 0.0;
+				tick = tick+1;
+				goto done355;
+			}
+			if((ranbin==1) && (tick<2) && (i < (number-2) ))
+			{
+				ManualShot("CLxStimulationDeviceGalvoXY", 1,time1,1); 
+				Wait(time1/1000);
+				UsedTime[i] = time1;
+				goto done355;
+			}
+		done355:
+		stimTime[i-1] = Get_Time();
+		ChangeROIType(i,0);
+
+	}
+	post1:
+	return TRUE
+}
+
+
+
+int output() //generates output text file, expects global scanSpeed, stimType, number, UsedPower[], power1,power2,power3,power4,stimTime 
+{
+	char k[200], h[200], title[20000], hold[20000],  settingsPath[200], name[200], outputPath[200]; 
+	double fps;
+	int n, t,z,size;
+	int left[1], top[1], right[1], bottom[1];
+	
+	
+  strcat(title,"Filename\tStim Rois\tFrames\tInterval (s)\tWavelength (nm)\tStim Rate (fps)\tStim Intensity\tStim Order\n");
+	Get_Filename(5,h);
+	
+  Get_FileTitle(name,h);
+  if (expType==0)
+     {strcpy(file,name);}
+	strcat(title,name);
+	strcat(title,"\t");
+	strcat(title,number);
+	strcat(title,"\t");
+	size = ND_GetExperimentLoopSize(1,1);
+	strcat(title,size);
+	strcat(title,"\t");
+	if(size==0)
+		{strcat(title,"N/A");}
+	if (size>0)
+		{strcat(title,interval/1000);}
+	strcat(title,"\t");
+	
+	if (waveType ==0)
+		{strcat(title,"355\t");}
+	if (waveType ==1)
+		{strcat(title,"405\t");}
+	if(waveType==1)
+	{
+		fps = 1/scanSpeed;
+		strcat(title,fps);
+	}
+	if(waveType==0)
+		{strcat(title,"N/A");}
+	strcat(title,"\t");
+	  
+	  
+	if(stimType ==0)
+		{strcat(title,"Single");}
+	if(stimType==1)
+		{strcat(title,"Multi");}
+	strcat(title, "\t");
+  if(expType==0)
+   {strcat(title,"Static");}
+	if(expType==1)
+		{strcat(title, "Parallel");}
+	if(expType==2)
+		{strcat(title,"Serial");}
+		
+	strcat(title, "\n");
+	hold = "ROI";
+	strcat(hold,"\t");
+	if(waveType==0)
+		strcat(hold,"Stim Time");
+	if(waveType==1)
+		strcat(hold,"Power Level");
+	strcat(hold,"\t");
+	strcat(hold,"Offset (ms)"); 
+	strcat(hold,"\t");
+	strcat(hold,"Left\tTop\tRight\tBottom\n");
+	  
+	for (t=1; t<=number; t=t+1;)
+	{
+
+		strcat(hold,t);
+		strcat(hold,"\t");
+		if(waveType==0)
+			strcat(hold,UsedTime[t]);
+		if(waveType==1)
+			strcat(hold,UsedPower[t]);
+		strcat(hold,"\t");
+		if(expType==2)
+			{strcat(hold,"0");}
+		else strcat(hold, (stimTime[t-1]-stimTime[0]));
+		strcat(hold,"\t");
+		GetROIInfo(t,left,top,right,bottom,NULL,NULL,NULL,NULL,NULL,NULL);
+		strcat(hold,left[0]);
+		strcat(hold,"\t");
+		strcat(hold,top[0]);
+		strcat(hold,"\t");
+		strcat(hold,right[0]);
+		strcat(hold,"\t");
+		strcat(hold,bottom[0]);
+		strcat(hold,"\n");
+
+
+	}
+		
+	strcat(title,hold);
+
+
+	
+	k=path;
+  
+  if (expType==2)
+   {strcat(k,iter);}
+  else strcat(k,file);
+  
+  settingsPath = "_Settings.txt";
+	strcat(k,settingsPath);
+	Int_CreateWindow(1,"Power Setting",8,0,0,0,0,title,1,1,0.00000,1,0,1,"Arial,B,8");
+	Int_OutputWindow(1,3,k);                                                //Create fulename_settings.txt file
+	Int_SetWindowState(1,0);
+
+  CloseAllDocuments(2);
+	return TRUE
+}
+
+int deleteVariables()	//deletes global variables
+{
+	DeleteVariable("a");
+	DeleteVariable("number");
+	DeleteVariable("expType");
+	DeleteVariable("stimType");
+	DeleteVariable("roiType");
+	DeleteVariable("div");
+	DeleteVariable("width");
+	DeleteVariable("height");
+	DeleteVariable("waveType");
+	DeleteVariable("controlType");
+	DeleteVariable("stimTime");
+	DeleteVariable("power1");
+	DeleteVariable("power2");
+	DeleteVariable("power3");
+	DeleteVariable("power4");
+	DeleteVariable("time1");
+	DeleteVariable("time2");
+	DeleteVariable("time3");
+	DeleteVariable("time4");
+	DeleteVariable("scanSpeed");
+	DeleteVariable("UsedPower");
+	DeleteVariable("UsedTime");
+	DeleteVariable("interval");
+}
+  
